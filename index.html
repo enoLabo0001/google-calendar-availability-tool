@@ -18,21 +18,28 @@
     .date-row{display:grid;grid-template-columns:1fr 1fr;gap:12px}.result-day{margin:12px 0 16px}.result-day strong{display:block;margin-bottom:5px}
     .result-slot{margin:4px 0;padding:5px 8px;background:#f4f7fb;border-radius:4px}
     .caption{font-size:12px;color:#78869a} @media(max-width:560px){body{padding:8px}main{padding:17px}.grid{grid-template-columns:1fr}}
+    
+    /* モーダル（ポップアップ）用スタイル */
+    #modal-overlay{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:1000;align-items:center;justify-content:center}
+    #modal-content{background:#fff;padding:24px;border-radius:12px;width:90%;max-width:400px;box-shadow:0 4px 24px rgba(0,0,0,0.2)}
+    #modal-content h3{margin-top:0;font-size:18px;color:#273443}
+    .modal-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:20px}
+    .modal-actions button{min-width:90px;flex:none;}
   </style>
 </head>
 <body>
 <main>
-  <h1>📅 空き時間・会議室検索ツール</h1>
+  <h1> 空き時間・会議室検索ツール</h1>
   <p>予定の空き時間のみを照合します。登録メンバー・会議室の予定タイトルは取得しません。</p>
-  <h2>1. 参加者を選ぶ</h2>
+  <h2>1. 参加者・会議室を選ぶ</h2>
   <div id="groupSelects" class="grid"></div>
   <label for="manual">参加者のメールアドレス（カレンダーID）を追加</label>
   <div class="grid" style="grid-template-columns:2fr 1fr">
     <input id="manual" type="email" placeholder="user@example.com" aria-label="参加者メールアドレス">
     <button type="button" id="add">追加</button>
   </div>
-  <label>選択した参加者（あなた自身の予定は必ず含まれます）</label>
-  <div id="chips"><span class="caption">ここに選択した参加者を表示</span></div>
+  <label>選択した参加者・会議室（あなた自身の予定は必ず含まれます）</label>
+  <div id="chips"><span class="caption">ここに選択した項目を表示</span></div>
   <h2>2. 期間を指定</h2>
   <div class="toolbar">
     <button type="button" data-mode="this_week">今週の空き枠</button>
@@ -47,12 +54,33 @@
   <h2>3. 結果</h2>
   <div id="results">ここに検索結果が表示されます。</div>
   <div class="toolbar">
-    <button id="rooms" type="button" class="secondary" disabled>候補日時の空き会議室を照合</button>
+    <button id="rooms" type="button" class="secondary" disabled>候補日時の空き会議室を全照合</button>
     <button id="copy" type="button" class="secondary" disabled>候補をコピー</button>
     <button id="copyClient" type="button" class="secondary" disabled>会議室ありの候補だけコピー</button>
   </div>
   <p class="caption">※ 権限がないカレンダーはエラーにします。招待可能か、会議室を実際に予約できるかは所属組織のルールに従って確認してください。</p>
 </main>
+
+<!-- マスター登録用モーダル -->
+<div id="modal-overlay">
+  <div id="modal-content">
+    <h3>マスターへ追加登録</h3>
+    <p class="caption" style="margin-bottom:15px;">次回の利用のためにスプレッドシート（マスター）へ追加登録しますか？</p>
+    <div style="margin-bottom: 15px;">
+      <span style="font-size:12px;color:#78869a;">メールアドレス（カレンダーID）</span><br>
+      <strong id="modal-email-text" style="word-break: break-all;"></strong>
+    </div>
+    <label for="modal-name">表示名</label>
+    <input type="text" id="modal-name" placeholder="例: 山田太郎">
+    <label for="modal-group">区分（部署やチーム名）</label>
+    <input type="text" id="modal-group" placeholder="例: 営業, 制作, 会議室, その他" value="その他">
+    <div class="modal-actions">
+      <button type="button" class="secondary" id="modal-cancel">しない</button>
+      <button type="button" id="modal-save">登録する</button>
+    </div>
+  </div>
+</div>
+
 <script>
   const selected = new Map();
   let latest = null, lastPayload = null, roomChecked = false;
@@ -62,9 +90,10 @@
   const isoLocal = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
   $('from').value = isoLocal(today);
   const next = new Date(today); next.setDate(next.getDate()+5); $('to').value = isoLocal(next);
+  
   function runServer(name, arg, success) {
     $('status').textContent = '処理中...';
-    document.querySelectorAll('button').forEach(b => b.disabled = true);
+    document.querySelectorAll('main button').forEach(b => b.disabled = true);
     google.script.run.withSuccessHandler(res => {
       $('status').textContent = '';
       success(res);
@@ -74,28 +103,67 @@
       syncButtons();
     })[name](arg);
   }
+  
   function syncButtons(){
-    document.querySelectorAll('button').forEach(b=>b.disabled=false);
+    document.querySelectorAll('main button').forEach(b=>b.disabled=false);
     $('rooms').disabled = !latest || !latest.dates.length;
     $('copy').disabled = !latest || !latest.dates.length;
     $('copyClient').disabled = !roomChecked || !latest || !latest.dates.length;
   }
+  
   function renderChips() {
-    $('chips').innerHTML = selected.size ? '' : '<span class="caption">ここに選択した参加者を表示</span>';
+    $('chips').innerHTML = selected.size ? '' : '<span class="caption">ここに選択した項目を表示</span>';
     for (const [id,name] of selected) {
       const span=document.createElement('span'); span.className='chip';
       span.appendChild(document.createTextNode(name+' '));
-      const remove=document.createElement('button');remove.type='button';remove.textContent='×';remove.setAttribute('aria-label', name+'を外す');
+      const remove=document.createElement('button');remove.type='button';remove.textContent='ﾗ';remove.setAttribute('aria-label', name+'を外す');
       remove.onclick=()=>{selected.delete(id);renderChips();invalidate();}; span.appendChild(remove);$('chips').appendChild(span);
     }
   }
+  
   function invalidate(){latest=null;roomChecked=false;$('results').textContent='条件を指定して検索してください。';syncButtons();}
+  
   function addMember(id,name){id=id.trim();if(!id || selected.has(id))return;selected.set(id,name||id);renderChips();invalidate();}
-  $('add').onclick=()=>{const id=$('manual').value.trim();if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(id)){alert('正しいメールアドレスを入力してください');return;}addMember(id,id);$('manual').value='';};
+  
+  // カスタムモーダルでの登録処理
+  $('add').onclick=()=>{
+    const id=$('manual').value.trim();
+    if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(id)){alert('正しいメールアドレスを入力してください');return;}
+    addMember(id,id);
+    $('manual').value='';
+
+    // モーダルを表示して初期値をセット
+    setTimeout(() => {
+      $('modal-email-text').textContent = id;
+      $('modal-name').value = id.split('@')[0];$('modal-group').value = 'その他';
+      $('modal-overlay').style.display = 'flex';
+      
+      // 登録ボタンの処理
+      $('modal-save').onclick = () => {
+        const name = $('modal-name').value.trim();
+        const group = $('modal-group').value.trim();
+        if (!name || !group) {
+          alert('表示名と区分を入力してください。');
+          return;
+        }
+        $('modal-overlay').style.display = 'none'; // モーダルを閉じる
+        runServer('addMemberToSheet', {group: group, name: name, email: id}, () => {
+          alert(`${name} をマスターに登録しました！次回の読み込み時からプルダウンに表示されます。`);
+        });
+      };
+      
+      // キャンセルボタンの処理
+      $('modal-cancel').onclick = () => {$('modal-overlay').style.display = 'none'; // モーダルを閉じる
+      };
+    }, 100);
+  };
+  
   $('manual').addEventListener('keydown',e=>{if(e.key==='Enter')$('add').click();});
   $('from').onchange=invalidate;$('to').onchange=invalidate;
+  
   google.script.run.withSuccessHandler(data=>{
     const container=$('groupSelects');
+    // 人のグループを追加
     for(const [group, members] of Object.entries(data.groups||{})){
       const wrap=document.createElement('div');const label=document.createElement('label');label.textContent=group;
       const sel=document.createElement('select');sel.setAttribute('aria-label',group+'から選択');
@@ -104,36 +172,51 @@
       sel.onchange=()=>{if(sel.value)addMember(sel.value,sel.options[sel.selectedIndex].text);sel.value='';};
       wrap.append(label,sel);container.appendChild(wrap);
     }
-    if(!Object.keys(data.groups||{}).length)container.textContent='設定シートに参加者が登録されていません。';
+    // 会議室のグループを追加
+    if(data.rooms && data.rooms.length > 0){
+      const wrap=document.createElement('div');const label=document.createElement('label');label.textContent='会議室（場所の指定）';
+      const sel=document.createElement('select');sel.setAttribute('aria-label','会議室から選択');
+      const base=new Option('-- 会議室を選択 --','');sel.add(base);
+      for(const m of data.rooms)sel.add(new Option(m.name,m.id));
+      sel.onchange=()=>{if(sel.value)addMember(sel.value,sel.options[sel.selectedIndex].text);sel.value='';};
+      wrap.append(label,sel);container.appendChild(wrap);
+    }
+    
+    if(!Object.keys(data.groups||{}).length && (!data.rooms || !data.rooms.length))container.textContent='設定シートに参加者・会議室が登録されていません。';
   }).withFailureHandler(err=>$('status').textContent='設定の読み込みに失敗: '+(err.message||err)).getBootstrapData();
+  
   document.querySelectorAll('[data-mode]').forEach(button=>button.onclick=()=>{
     lastPayload={mode:button.dataset.mode,start:$('from').value,end:$('to').value,ids:[...selected.keys()]};
     roomChecked=false;
     runServer('findFreeSlots',lastPayload,res=>{latest=res;renderResults();});
   });
+  
   $('rooms').onclick=()=>runServer('findSlotsWithRooms',lastPayload,res=>{latest=res;roomChecked=true;renderResults();});
   const format = iso => new Intl.DateTimeFormat('ja-JP',{timeZone:'Asia/Tokyo',hour:'2-digit',minute:'2-digit',hour12:false}).format(new Date(iso));
   const dateLabel=date=>{const [y,m,d]=date.split('-').map(Number);return `${m}月${d}日(${['日','月','火','水','木','金','土'][new Date(y,m-1,d).getDay()]})`;};
+  
   function renderResults(){
     if(!latest || !latest.dates.length){$('results').textContent=latest?.message||'候補がありません。';return;}
-    $('results').innerHTML=latest.dates.map(day=>`<div class="result-day"><strong>${esc(dateLabel(day.date))}</strong>${day.slots.map(s=>`<div class="result-slot">${esc(format(s.start))}〜${esc(format(s.end))}${roomChecked ? '<br><span class="caption">'+(s.freeRooms.length ? '空き会議室: '+esc(s.freeRooms.join('、')) : '空き会議室なし')+'</span>' : ''}</div>`).join('')}</div>`).join('');
+    $('results').innerHTML=latest.dates.map(day=>`<div class="result-day"><strong>${esc(dateLabel(day.date))}</strong>${day.slots.map(s=>`<div class="result-slot">${esc(format(s.start))}～${esc(format(s.end))}${roomChecked ? '<br><span class="caption">'+(s.freeRooms.length ? '空き会議室: '+esc(s.freeRooms.join('、')) : '空き会議室なし')+'</span>' : ''}</div>`).join('')}</div>`).join('');
   }
+  
   function buildCopy(clientOnly){
     const lines=[];
     for(const day of latest.dates){
       const slots=day.slots.filter(s=>!clientOnly || (s.freeRooms && s.freeRooms.length));
-      if(slots.length)lines.push(dateLabel(day.date)+' '+slots.map(s=>format(s.start)+'〜'+format(s.end)).join('、'));
+      if(slots.length)lines.push(dateLabel(day.date)+' '+slots.map(s=>format(s.start)+'～'+format(s.end)).join('、'));
     }
     return lines.join('\n');
   }
+  
   async function copyText(text){
     if(!text){alert('コピーできる候補がありません。');return;}
     try { await navigator.clipboard.writeText(text); }
     catch(e){const ta=document.createElement('textarea');ta.value=text;document.body.appendChild(ta);ta.select();document.execCommand('copy');ta.remove();}
     alert('候補日時をコピーしました。');
   }
-  $('copy').onclick=()=>copyText(buildCopy(false));
-  $('copyClient').onclick=()=>copyText(buildCopy(true));
+  
+  $('copy').onclick=()=>copyText(buildCopy(false));$('copyClient').onclick=()=>copyText(buildCopy(true));
   syncButtons();
 </script>
 </body>

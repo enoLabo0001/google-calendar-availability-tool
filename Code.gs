@@ -54,6 +54,23 @@ function setConfigSpreadsheetId(id) {
   PropertiesService.getScriptProperties().setProperty(APP.CONFIG_KEY, String(id));
 }
 
+// =========================================================
+// 🆕 画面から未登録メンバーをスプレッドシートに追加する機能
+// =========================================================
+function addMemberToSheet(payload) {
+  const id = PropertiesService.getScriptProperties().getProperty(APP.CONFIG_KEY);
+  if (!id) throw new Error('初期設定が未完了です。管理者が setupSampleSpreadsheet() を実行してください。');
+  const sh = SpreadsheetApp.openById(id).getSheetByName('メンバー');
+  if (!sh) throw new Error('「メンバー」シートがありません。');
+  
+  // シートの最終行に [区分, 表示名, メアド] を追加
+  sh.appendRow([payload.group, payload.name, payload.email]);
+  return true;
+}
+
+// =========================================================
+// 既存の空き時間検索・データ取得ロジック
+// =========================================================
 function getConfig_() {
   const id = PropertiesService.getScriptProperties().getProperty(APP.CONFIG_KEY);
   if (!id) throw new Error('初期設定が未完了です。管理者が setupSampleSpreadsheet() を実行してください。');
@@ -134,7 +151,6 @@ function getDateRange_(mode, start, end) {
   return {first, last, empty: false};
 }
 
-/** APIが予定情報にアクセスできない場合は「空き」ではなくエラーにする。 */
 function getBusy_(ids, min, max) {
   if (ids.length === 0) return {};
   if (ids.length > APP.MAX_CALENDARS) throw new Error('照会できるカレンダーは最大40件です。');
@@ -156,10 +172,6 @@ function getBusy_(ids, min, max) {
   return out;
 }
 
-/**
- * 利用者が購読する日本の祝日カレンダーを自動判定する。
- * 旧ID・新IDの双方に対応。見つからない場合は祝日を無視せず停止する。
- */
 function findHolidayCalendarId_() {
   const ids = [];
   let pageToken;
@@ -170,7 +182,6 @@ function findHolidayCalendarId_() {
     for (const item of (page.items || [])) {
       const id = String(item.id || '');
       const name = String(item.summary || '');
-      // 祝日IDを優先。Googleアカウントの言語による表示名差異を避ける。
       if (APP.HOLIDAY_CALENDAR_IDS.includes(id) ||
           (/japanese.*holiday/i.test(id) && /group\.v\.calendar\.google\.com$/.test(id)) ||
           (/^(日本の祝日|Holidays in Japan)$/i.test(name) && /holiday/i.test(id))) {
@@ -207,7 +218,6 @@ function holidayDates_(start, end) {
     const page = Calendar.Events.list(id, options);
     for (const event of (page.items || [])) {
       if (event.status === 'cancelled') continue;
-      // 祝日カレンダーの終日イベントは開始日を yyyy-MM-dd で返す。
       const day = event.start && (event.start.date ||
         (event.start.dateTime ? localDay_(new Date(event.start.dateTime)) : null));
       if (day) dates.add(day);
@@ -217,7 +227,6 @@ function holidayDates_(start, end) {
   return dates;
 }
 
-/** @returns {{dates:Array,rooms:Array}} 日時はISO 8601で返し、表示処理と分離 */
 function findFreeSlots(payload) {
   payload = payload || {};
   const config = getConfig_();
@@ -262,7 +271,6 @@ function findFreeSlots(payload) {
   return {dates, rooms: config.rooms, message: dates.length ? '' : '条件に合う空き時間はありませんでした。'};
 }
 
-/** 候補枠を改ざんして照合する必要がないように期間と参加者を再計算。 */
 function findSlotsWithRooms(payload) {
   const result = findFreeSlots(payload);
   if (!result.dates.length) return result;
